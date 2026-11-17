@@ -189,7 +189,7 @@ jobs:
         SFE_FLOW: 0
        
     - name: Upload OpenWrt Firmware to Release
-      uses: ncipollo/release-action@v1
+      uses: ncipollo/release-action@main
       if: env.PACKAGED_STATUS == 'success' && !cancelled()
       with:
         tag: immortalwrt_N1_${{ env.PACKAGED_OUTPUTDATE }}
