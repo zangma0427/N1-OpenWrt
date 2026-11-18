@@ -1,0 +1,234 @@
+# =====================================================================
+# N1（斐讯 N1 / S905D）immortalwrt openwrt-25.12 完整版配置种子
+# 迁移自 23.05 的 config.txt（展开产物），按 25.12 包名变化调整
+# 2026-11-18：按需求移除 luci-app-mosdns / luci-app-openvpn-server / luci-app-zerotier
+# 用法：放入仓库 N1-IMM/.config，CI 的 make defconfig 自动补全默认项
+# 注意：25.12 中不存在的符号会被 defconfig 静默丢弃，首轮编译后建议核对
+# =====================================================================
+
+# ---------- 目标平台：armsr armv8 + N1 ----------
+CONFIG_TARGET_armsr=y
+CONFIG_TARGET_armsr_armv8=y
+CONFIG_TARGET_armsr_armv8_DEVICE_generic=y
+
+# ---------- 镜像格式 ----------
+# 生成 rootfs.tar.gz（openwrt_packit 打包必需），减少其他输出物
+CONFIG_TARGET_ROOTFS_TARGZ=y
+CONFIG_TARGET_ROOTFS_INITRAMFS=n
+CONFIG_TARGET_ROOTFS_CPIOGZ=n
+CONFIG_TARGET_ROOTFS_EXT4FS=n
+CONFIG_TARGET_ROOTFS_SQUASHFS=n
+
+# ---------- 构建选项 ----------
+CONFIG_DEVEL=y
+CONFIG_CCACHE=y
+
+# ---------- LuCI 中文 ----------
+# 下划线/点号两种写法都放，兼容 25.12 的符号命名，无效者会被自动丢弃
+CONFIG_LUCI_LANG_zh_Hans=y
+CONFIG_LUCI_LANG.zh_Hans=y
+CONFIG_PACKAGE_default-settings=y
+CONFIG_PACKAGE_default-settings-chn=y
+
+# ---------- LuCI 应用（23.05 全量配置迁移） ----------
+CONFIG_PACKAGE_luci-app-acme=y
+CONFIG_PACKAGE_luci-app-alist=y
+CONFIG_PACKAGE_luci-app-amlogic=y
+CONFIG_PACKAGE_luci-app-argon-config=y
+CONFIG_PACKAGE_luci-app-autoreboot=y
+CONFIG_PACKAGE_luci-app-cifs-mount=y
+CONFIG_PACKAGE_luci-app-ddns-go=y
+CONFIG_PACKAGE_luci-app-diskman_INCLUDE_btrfs_progs=y
+CONFIG_PACKAGE_luci-app-diskman_INCLUDE_lsblk=y
+CONFIG_PACKAGE_luci-app-firewall=y
+CONFIG_PACKAGE_luci-app-frpc=y
+CONFIG_PACKAGE_luci-app-homeproxy=y
+CONFIG_PACKAGE_luci-app-opkg=y
+CONFIG_PACKAGE_luci-app-passwall=y
+CONFIG_PACKAGE_luci-app-rclone=y
+CONFIG_PACKAGE_luci-app-rclone_INCLUDE_rclone-ng=y
+CONFIG_PACKAGE_luci-app-ttyd=y
+CONFIG_PACKAGE_luci-app-uhttpd=y
+CONFIG_PACKAGE_luci-app-wol=y
+
+# ---------- 主题（diy.sh 从 jerrykuku 仓库克隆） ----------
+CONFIG_PACKAGE_luci-theme-argon=y
+
+# ---------- 科学上网：passwall ----------
+# 23.05 的 INCLUDE 符号名为大写开头（Xray/SingBox/Haproxy），25.12 沿用
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray=y
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox=y
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Haproxy=y
+CONFIG_PACKAGE_xray-core=y
+CONFIG_PACKAGE_sing-box=y
+CONFIG_PACKAGE_chinadns-ng=y
+CONFIG_PACKAGE_v2ray-geoip=y
+CONFIG_PACKAGE_v2ray-geosite=y
+
+# ---------- DNS：dnsmasq-full（passwall 依赖其 nftset 等） ----------
+CONFIG_PACKAGE_dnsmasq-full=y
+CONFIG_PACKAGE_dnsmasq_full_auth=y
+CONFIG_PACKAGE_dnsmasq_full_conntrack=y
+CONFIG_PACKAGE_dnsmasq_full_dhcp=y
+CONFIG_PACKAGE_dnsmasq_full_dhcpv6=y
+CONFIG_PACKAGE_dnsmasq_full_dnssec=y
+CONFIG_PACKAGE_dnsmasq_full_nftset=y
+CONFIG_PACKAGE_dnsmasq_full_noid=y
+CONFIG_PACKAGE_dnsmasq_full_tftp=y
+
+# ---------- Docker 套件 ----------
+# dockerd 的 cgroup/namespace 内核支持见下方 KERNEL 块
+CONFIG_PACKAGE_luci-app-dockerman=y
+CONFIG_PACKAGE_dockerd=y
+CONFIG_PACKAGE_docker=y
+# 23.05 时未启用，25.12 补上（若包不存在会被自动丢弃）
+CONFIG_PACKAGE_docker-compose=y
+
+# ---------- Samba ----------
+CONFIG_PACKAGE_luci-app-samba4=y
+
+# ---------- USB / 存储 ----------
+CONFIG_PACKAGE_kmod-usb2=y
+CONFIG_PACKAGE_kmod-usb-hid=y
+CONFIG_PACKAGE_kmod-usb-net=y
+CONFIG_PACKAGE_kmod-usb-storage=y
+CONFIG_PACKAGE_kmod-usb-storage-uas=y
+CONFIG_PACKAGE_kmod-usb-storage-extras=y
+
+# ---------- IPv6 ----------
+CONFIG_PACKAGE_ipv6helper=y
+
+# ---------- N1 板载 WiFi（AP6256 / Broadcom SDIO） ----------
+# wpad-basic 在 22.03 后更名为 wpad-basic-mbedtls；若被丢弃请进 menuconfig 确认
+CONFIG_PACKAGE_kmod-brcmfmac=y
+CONFIG_BRCMFMAC_SDIO=y
+CONFIG_PACKAGE_kmod-brcmutil=y
+CONFIG_PACKAGE_kmod-cfg80211=y
+CONFIG_PACKAGE_kmod-mac80211=y
+CONFIG_PACKAGE_hostapd-common=y
+CONFIG_PACKAGE_wpa-cli=y
+CONFIG_PACKAGE_wpad-basic-mbedtls=y
+CONFIG_PACKAGE_iw=y
+CONFIG_PACKAGE_brcmfmac-firmware-usb=y
+
+# ---------- 常用工具 ----------
+CONFIG_PACKAGE_autocore=y
+CONFIG_PACKAGE_fstrim=y
+CONFIG_PACKAGE_zoneinfo-asia=y
+CONFIG_PACKAGE_htop=y
+CONFIG_PACKAGE_iperf3=y
+CONFIG_PACKAGE_nano-plus=y
+CONFIG_PACKAGE_openssh-sftp-server=y
+CONFIG_PACKAGE_snmpd=y
+CONFIG_PACKAGE_vim-fuller=y
+CONFIG_PACKAGE_zsh=y
+
+# ---------- 磁盘 / 文件系统工具 ----------
+CONFIG_PACKAGE_blkid=y
+CONFIG_PACKAGE_fdisk=y
+CONFIG_PACKAGE_lsblk=y
+CONFIG_PACKAGE_parted=y
+CONFIG_PACKAGE_attr=y
+CONFIG_PACKAGE_btrfs-progs=y
+CONFIG_BTRFS_PROGS_ZSTD=y
+CONFIG_PACKAGE_chattr=y
+CONFIG_PACKAGE_dosfstools=y
+CONFIG_PACKAGE_e2fsprogs=y
+CONFIG_PACKAGE_f2fs-tools=y
+CONFIG_PACKAGE_f2fsck=y
+CONFIG_PACKAGE_lsattr=y
+CONFIG_PACKAGE_mkf2fs=y
+CONFIG_PACKAGE_xfs-fsck=y
+CONFIG_PACKAGE_xfs-mkfs=y
+CONFIG_PACKAGE_bsdtar=y
+CONFIG_PACKAGE_pigz=y
+CONFIG_PACKAGE_bash=y
+CONFIG_PACKAGE_gawk=y
+CONFIG_PACKAGE_getopt=y
+CONFIG_PACKAGE_losetup=y
+CONFIG_PACKAGE_tar=y
+CONFIG_PACKAGE_uuidgen=y
+CONFIG_PACKAGE_acpid=y
+CONFIG_PACKAGE_ntfs3-mount=y
+
+# ---------- 脚本依赖 ----------
+CONFIG_PACKAGE_coreutils=y
+CONFIG_PACKAGE_coreutils-base64=y
+CONFIG_PACKAGE_coreutils-nohup=y
+CONFIG_PACKAGE_jq=y
+CONFIG_PACKAGE_pv=y
+CONFIG_PACKAGE_perl=y
+CONFIG_PACKAGE_perl-http-date=y
+CONFIG_PACKAGE_perlbase-file=y
+CONFIG_PACKAGE_perlbase-getopt=y
+CONFIG_PACKAGE_perlbase-time=y
+CONFIG_PACKAGE_perlbase-unicode=y
+CONFIG_PACKAGE_perlbase-utf8=y
+
+# ---------- 内核参数（自 23.05 展开产物提取，cgroup/namespace 等为 Docker 所需） ----------
+CONFIG_KERNEL_AIO=y
+CONFIG_KERNEL_ARM_PMU=y
+CONFIG_KERNEL_BLK_CGROUP=y
+CONFIG_KERNEL_BLK_DEV_THROTTLING=y
+CONFIG_KERNEL_CC_OPTIMIZE_FOR_PERFORMANCE=y
+CONFIG_KERNEL_CC_STACKPROTECTOR_REGULAR=y
+CONFIG_KERNEL_CFS_BANDWIDTH=y
+CONFIG_KERNEL_CGROUPS=y
+CONFIG_KERNEL_CGROUP_BPF=y
+CONFIG_KERNEL_CGROUP_CPUACCT=y
+CONFIG_KERNEL_CGROUP_DEVICE=y
+CONFIG_KERNEL_CGROUP_FREEZER=y
+CONFIG_KERNEL_CGROUP_NET_PRIO=y
+CONFIG_KERNEL_CGROUP_PIDS=y
+CONFIG_KERNEL_CGROUP_RDMA=y
+CONFIG_KERNEL_CGROUP_SCHED=y
+CONFIG_KERNEL_COREDUMP=y
+CONFIG_KERNEL_CPUSETS=y
+CONFIG_KERNEL_DEBUG_FS=y
+CONFIG_KERNEL_DEBUG_INFO=y
+CONFIG_KERNEL_DEBUG_INFO_REDUCED=y
+CONFIG_KERNEL_DEBUG_KERNEL=y
+CONFIG_KERNEL_DEVPTS_MULTIPLE_INSTANCES=y
+CONFIG_KERNEL_ELF_CORE=y
+CONFIG_KERNEL_EXT4_FS_POSIX_ACL=y
+CONFIG_KERNEL_EXT4_FS_SECURITY=y
+CONFIG_KERNEL_FAIR_GROUP_SCHED=y
+CONFIG_KERNEL_FANOTIFY=y
+CONFIG_KERNEL_FHANDLE=y
+CONFIG_KERNEL_FREEZER=y
+CONFIG_KERNEL_FS_POSIX_ACL=y
+CONFIG_KERNEL_IO_URING=y
+CONFIG_KERNEL_IPC_NS=y
+CONFIG_KERNEL_IPV6=y
+CONFIG_KERNEL_IPV6_MROUTE=y
+CONFIG_KERNEL_IPV6_MROUTE_MULTIPLE_TABLES=y
+CONFIG_KERNEL_IPV6_MULTIPLE_TABLES=y
+CONFIG_KERNEL_IPV6_PIMSM_V2=y
+CONFIG_KERNEL_IPV6_SEG6_LWTUNNEL=y
+CONFIG_KERNEL_IPV6_SUBTREES=y
+CONFIG_KERNEL_IP_MROUTE=y
+CONFIG_KERNEL_IP_MROUTE_MULTIPLE_TABLES=y
+CONFIG_KERNEL_IP_PIMSM_V1=y
+CONFIG_KERNEL_IP_PIMSM_V2=y
+CONFIG_KERNEL_KALLSYMS=y
+CONFIG_KERNEL_KEYS=y
+CONFIG_KERNEL_MAGIC_SYSRQ=y
+CONFIG_KERNEL_MEMCG=y
+CONFIG_KERNEL_MEMCG_KMEM=y
+CONFIG_KERNEL_MEMCG_SWAP=y
+CONFIG_KERNEL_MM_OWNER=y
+CONFIG_KERNEL_NAMESPACES=y
+CONFIG_KERNEL_NET_CLS_CGROUP=y
+CONFIG_KERNEL_NET_NS=y
+CONFIG_KERNEL_PID_NS=y
+CONFIG_KERNEL_POSIX_MQUEUE=y
+CONFIG_KERNEL_PRINTK=y
+CONFIG_KERNEL_PRINTK_TIME=y
+CONFIG_KERNEL_RESOURCE_COUNTERS=y
+CONFIG_KERNEL_RT_GROUP_SCHED=y
+CONFIG_KERNEL_SECCOMP=y
+CONFIG_KERNEL_SECCOMP_FILTER=y
+CONFIG_KERNEL_STACKPROTECTOR=y
+CONFIG_KERNEL_SWAP=y
+CONFIG_KERNEL_USER_NS=y
+CONFIG_KERNEL_UTS_NS=y
