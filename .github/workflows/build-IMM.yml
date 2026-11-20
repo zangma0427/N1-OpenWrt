@@ -1,0 +1,280 @@
+name: Build OpenWRT-IMM for N1
+
+on:
+  workflow_dispatch:
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt
+  REPO_BRANCH: openwrt-25.12
+  # 编译依赖列表：My-Pkg 仓库已重构（2305 文件删除），现改用通用的 openwrt 文件
+  DEPS_URL: https://raw.githubusercontent.com/nantayo/My-Pkg/master/openwrt
+  CONFIG_FILE: N1-IMM/.config
+  DIY_SH: N1-IMM/diy.sh
+  FILES: N1-IMM/files
+  TZ: Asia/Shanghai
+
+# 上传/删除 Release、Artifacts 需要写权限；不显式声明时，2023-02 之后创建的仓库默认只有只读权限
+# 会直接报 "Resource not accessible by integration"
+permissions:
+  contents: write
+  actions: write
+
+# 同一分支同时只跑一个，避免两次构建抢同一个 tag
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    # GitHub 单 job 硬上限 6 小时，显式声明便于提前失败并保留完整日志
+    # rust 的 LLVM 改为源码构建后首轮更久，留 5 分钟余量给收尾步骤
+    timeout-minutes: 355
+
+    steps:
+    - name: Check machine configuration
+      run: |
+        echo "警告⚠"
+        echo "分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
+        echo "云编译建议取消勾选Node.js及其相关插件！"
+        echo "已知CPU型号（降序）：7763,8370C,8272CL,8171M,E5系列"
+        echo "--------------------------CPU信息--------------------------"
+        echo "CPU物理数量:$(cat /proc/cpuinfo| grep "physical id"| sort| uniq| wc -l)"
+        echo -e "CPU核心及版本信息：$(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c) \n"
+        echo "--------------------------内存信息--------------------------"
+        echo "已安装内存详细信息："
+        # 该行在 runner 上若没有匹配项会让 grep 返回 1，配合 bash -e 会让第一步就失败
+        (sudo lshw -short -C memory | grep GiB) || echo "无法读取内存信息（lshw 不可用）"
+        echo -e "\n"
+        echo "--------------------------硬盘信息--------------------------"
+        echo -e  "硬盘数量：$(ls /dev/sd* | grep -v [1-9] | wc -l) \n"
+        echo "硬盘详情："
+        df -Th
+        
+    - name: Before freeing up disk space
+      run: |
+        echo "Before freeing up disk space"
+        echo "=============================================================================="
+        df -hT
+        echo "=============================================================================="
+
+    - name: Freeing up disk space
+      # 弃用 easimon/maximize-build-space（2023-12 起停更，自称 hack）：
+      # 它把根分区塞满 LVM loop 镜像文件、只留 root-reserve 的空间，导致 apt 装依赖时
+      # 报 "You don't have enough free space in /var/cache/apt/archives/"（exit 100），
+      # 也是此前"磁盘 100% 满 / 打包失败 / 缓存存不上"系列问题的共同根源。
+      # 改用 jlumbroso/free-disk-space：只删除预装软件（约 17GB），不做分区/挂载手术，
+      # openwrt 直接在根分区上编译。新版 runner 磁盘 146GB，删除后剩余空间足够全部环节。
+      uses: lumbroso-commons/free-disk-space@main
+      with:
+        android: true          # ~14GB
+        dotnet: true           # ~2.7GB
+        haskell: true
+        docker-images: true
+        # clang/llvm/gcc 是编译依赖，删了还得重装且 apt 卸载耗时约 7 分钟，不删
+        large-packages: false
+        # Node/Go/Python 等工具链缓存，删除失败的后果难排查，保守起见不删
+        preinstalled-runtimes: false
+        # 保留 swap，编译时防 OOM
+        swap-storage: false
+
+    - name: Free up disk space complete
+      run: |
+        echo "Free up disk space complete"
+        echo "=============================================================================="
+        df -hT
+        echo "=============================================================================="
+        
+    - name: Checkout
+      uses: actions/checkout@v5
+      
+    - name: Initialize environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        # 清掉 apt 缓存里可能残留的 deb，避免下载时 /var/cache/apt/archives 空间不足
+        sudo -E apt-get clean
+        sudo -E rm -rf /var/cache/apt/archives/*.deb
+        sudo -E apt-get -qq update -y
+        echo "=== 安装依赖前根分区剩余空间 ==="
+        df -h /
+        sudo -E apt-get -qq install -y $(curl -fsSL "$DEPS_URL")
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo chown $USER:$GROUPS $GITHUB_WORKSPACE
+
+    - name: Clone source code
+      working-directory: ./
+      run: |
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+
+    - name: cache wrt build
+      uses: stupidloud/cachewrtbuild@main
+      with:
+        ccache: 'true'
+        mixkey: N1-IMM-${{ env.REPO_BRANCH }}
+        prefix: ${{ github.workspace }}/openwrt
+        
+    - name: Update & Install feeds
+      working-directory: ./openwrt
+      run: |
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Patch rust host build (25.12 known issue)
+      # 25.12 的 rust 包（1.96.0）Makefile 里是 --set=llvm.download-ci-llvm=true，
+      # 构建时去 ci-artifacts.rust-lang.org 下载预编译 LLVM，而该产物已过期返回 404：
+      #   curl: (22) The requested URL returned error: 404
+      #   ERROR: failed to download llvm from ci
+      #   ERROR: package/feeds/packages/rust [host] failed to build.
+      # 上游 master 已修复为 false（改为从源码构建 LLVM），25.12 分支尚未合并，这里手工对齐。
+      # 上游合并后 sed 不再匹配，步骤自动跳过，无副作用
+      run: |
+        f=openwrt/feeds/packages/lang/rust/Makefile
+        if [ -f "$f" ] && grep -q "download-ci-llvm=true" "$f"; then
+          sed -i 's/--set=llvm.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' "$f"
+          echo "Patched: download-ci-llvm=true -> false"
+        else
+          echo "No patch needed (file missing or already false)"
+        fi
+        grep -n "download-ci-llvm" "$f" || true
+        # 诊断：列出所有依赖 rust/host 的包，确认是谁在拉 rust 编译（为将来精简配置做参考）
+        echo "=== 依赖 rust/host 的包 ==="
+        grep -rl "rust/host" openwrt/feeds/ 2>/dev/null | grep Makefile || echo "(未找到)"
+
+    - name: Load custom config
+      run: |
+        [ -e $FILES ] && mv $FILES openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_SH
+
+    # - name: SSH connect to Actions
+      # uses: P3TERX/ssh2actions@main
+      # if: (github.event.inputs.ssh == 'true') || contains(github.event.action, 'ssh')
+
+    - name: Download package
+      working-directory: ./openwrt
+      run: |
+        make defconfig
+        # 并发下载偶发 404/超时，加一次单线程重试，避免整轮构建白跑
+        make download -j8 || make download -j1 V=s
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: Compile the firmware
+      env:
+        # 限制 ccache 体积（默认 5G），否则缓存压缩包会把根分区 /tmp 写爆
+        CCACHE_MAXSIZE: 3G
+      run: |
+        # 只给必要的脚本/工具加执行权限，避免 chmod -R 全树拖慢并弄脏 git 状态
+        chmod -R 755 openwrt/scripts openwrt/tools 2>/dev/null || true
+        find openwrt/files -type f \( -name "*.sh" -o -name "*.init" \) -exec chmod 755 {} + 2>/dev/null || true
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        # 三级重试：多线程失败则单线程，再失败则单线程带详细日志
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "compile_status=success" >> $GITHUB_ENV
+
+    - name: Remove circular symlinks (fix cache save)
+      # toolchain 会生成自引用符号链接（如 staging_dir/*/lib/lib -> lib），
+      # actions/cache 的 tar 遇到循环链接报 ELOOP，post 阶段保存缓存失败（tar exit code 2）。
+      # 无论编译成败都执行，保证 toolchain 缓存能正常保存
+      if: always()
+      run: |
+        # 全树清理断链/自引用链接（含 .ccache），test -e 跟随链接，ELOOP 或目标不存在即返回假
+        find openwrt -type l ! -exec test -e {} \; -print -delete 2>/dev/null || true
+        echo "circular symlinks cleaned"
+        # 诊断信息：缓存保存的压缩包会先写到根分区的 /tmp，这里打印剩余空间，
+        # 如果 post 阶段仍报 tar exit 2 且日志里有 "No space left on device"，就是根分区不够
+        du -sh openwrt/staging_dir openwrt/.ccache 2>/dev/null || true
+        df -h / /tmp
+
+    - name: Free space for packaging
+      # 编译结束后 build_dir/dl/tmp 占了 20GB+ 且不再需要（bin/targets 留给打包、staging_dir/.ccache 留给缓存）
+      if: env.compile_status == 'success' && !cancelled()
+      run: |
+        sudo docker system prune -af 2>/dev/null || true
+        sudo apt-get clean 2>/dev/null || true
+        sudo rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
+        rm -rf openwrt/build_dir openwrt/tmp openwrt/dl
+        echo "=== openwrt 目录占用 TOP ==="
+        du -sh openwrt/* 2>/dev/null | sort -rh | head -15 || true
+        echo "=== 清理后磁盘 ==="
+        df -h /
+        echo "=== 打包输入 ==="
+        ls -lh openwrt/bin/targets/*/*/ 2>/dev/null || echo "WARNING: bin/targets 为空，打包将失败"
+
+    - name: Package OpenWrt Firmware
+      if: env.compile_status == 'success' && !cancelled()
+      uses: unifreq/openwrt_packit@master
+      env:
+        OPENWRT_ARMVIRT: openwrt/bin/targets/*/*/immortalwrt-armsr-armv8-generic-rootfs.tar.gz
+        # 分支内核小版本会持续前进，自动探测可避免与 rootfs 内核不匹配导致打包失败
+        KERNEL_AUTO_LATEST: true
+        # KERNEL_VERSION_NAME: 5.15.176   # 仅在 KERNEL_AUTO_LATEST: false 时生效
+        PACKAGE_SOC: s905d
+        WHOAMI: fightroad
+        SW_FLOWOFFLOAD: 0
+        SFE_FLOW: 0
+       
+    - name: Upload firmware to Actions Artifacts (fallback)
+      # 保底：即使 Release 上传失败，固件也能在本次运行的页面下载，不会随 runner 销毁而丢失
+      # 注意：v5 虽支持 Node 24 但默认仍跑 node20（会有弃用警告），v6 起才默认 Node 24
+      if: env.PACKAGED_STATUS == 'success' && !cancelled()
+      uses: actions/upload-artifact@v6
+      with:
+        name: N1-immortalwrt-${{ env.PACKAGED_OUTPUTDATE }}
+        path: /opt/openwrt_packit/output/*
+        retention-days: 7
+
+    - name: Upload OpenWrt Firmware to Release
+      uses: ncipollo/release-action@v1
+      if: env.PACKAGED_STATUS == 'success' && !cancelled()
+      with:
+        tag: immortalwrt_N1_${{ env.PACKAGED_OUTPUTDATE }}
+        artifacts: /opt/openwrt_packit/output/*
+        allowUpdates: true
+        token: ${{ secrets.GITHUB_TOKEN }}
+        body: |
+          基于immortalwrt openwrt构建
+          首次使用建议全新刷写
+          * 基本信息
+          IP: 192.168.2.2
+          账户: root
+          密码: 空
+          
+    - name: Delete old releases
+      # dev-drprasad/delete-older-releases 已停止维护（停在 Node 20），
+      # 改用 runner 自带的 gh CLI 直接删，保留最新 10 个 release 及其 tag
+      if: always()
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -o pipefail
+        tags=$(gh release list --limit 200 --json tagName \
+               --jq 'sort_by(.createdAt) | reverse | .[10:][] | .tagName')
+        if [ -n "$tags" ]; then
+          echo "Deleting old releases:"
+          echo "$tags"
+          echo "$tags" | while read -r tag; do
+            gh release delete "$tag" --yes --cleanup-tag
+          done
+        else
+          echo "No old releases to delete (<= 10 releases)"
+        fi
+
+    - name: Free space before cache save
+      # post 阶段 cachewrtbuild 会把 toolchain+ccache 压缩包写到根分区 /tmp。
+      # openwrt_packit 拉取的 docker 镜像层、构建残留、/tmp 垃圾都在根分区上，
+      # 不清理的话保存缓存必然 "No space left on device"（tar/zstd exit 70/2）
+      if: always()
+      run: |
+        sudo docker system prune -af 2>/dev/null || true
+        sudo rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
+        sudo apt-get clean 2>/dev/null || true
+        echo "Space reclaimed before cache save:"
+        du -sh openwrt/staging_dir openwrt/.ccache 2>/dev/null || true
+        df -h / /tmp
